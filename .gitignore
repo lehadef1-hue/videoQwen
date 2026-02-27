@@ -1,0 +1,33 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Model / HF cache
+hf_cache/
+*.gguf
+*.safetensors
+
+# Результаты анализа
+result/
+
+# База исполнителей (большой бинарный файл, собирается локально)
+performers_db.pkl
+*.pkl
+
+# Сгенерированные скрипты
+start_model_server.sh
+start_app.sh
+
+# Env
+.env
+*.env
+
+# OS
+.DS_Store
+Thumbs.db
