@@ -54,7 +54,6 @@ logger = logging.getLogger("db_builder")
 TPDB_BASE  = "https://api.theporndb.net"
 TPDB_TOKEN = os.getenv("TPDB_API_TOKEN", "")
 DB_PATH    = os.getenv("PERFORMER_DB_PATH", "/workspace/my_performers.pkl")
-
 # ── InsightFace ───────────────────────────────────────────────────────────────
 _face_app = None
 

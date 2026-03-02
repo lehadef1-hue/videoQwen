@@ -671,6 +671,9 @@
 #         workers=1
 #     )
 
+
+
+
 import os
 import sys
 import cv2
@@ -884,6 +887,9 @@ def extract_json_from_response(text: str) -> Optional[Dict]:
 
     def _try_parse(s: str) -> Optional[Dict]:
         s = re.sub(r',\s*(?=[}\]])', '', s).strip()
+        # Fix: model puts "thumbnailIndex": N inside frames array instead of as sibling key
+        # {"frames": [..., "thumbnailIndex": 3}  →  {"frames": [...], "thumbnailIndex": 3}
+        s = re.sub(r'(?<!\]),\s*"thumbnailIndex":\s*(\d+)\s*\}\s*$', r'], "thumbnailIndex": \1}', s)
         try:
             return json.loads(s)
         except json.JSONDecodeError:
