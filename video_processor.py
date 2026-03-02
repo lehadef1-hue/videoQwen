@@ -526,6 +526,7 @@ class ProcessRequest(BaseModel):
 
 # Поддержка Jinja2 и статических файлов
 templates = Jinja2Templates(directory="templates")
+Path("/workspace/video/result").mkdir(parents=True, exist_ok=True)
 app.mount("/results", StaticFiles(directory="/workspace/video/result"), name="results")
 
 
