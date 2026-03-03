@@ -931,14 +931,28 @@ def validate_categories(categories: List[str], orientation: Optional[str]) -> Li
     requires_vagina = {"pussy licking", "squirt", "creampie"}
 
     if orientation == "gay":
-        # Gay (мужчина+мужчина): нет вагины, нет женских тегов
-        forbidden = requires_vagina | {"lesbian", "milf", "squirt", "pregnant", "lactating", "pussy licking"}
+        # Gay (только мужчины): нет вагины, нет женских тегов, нет страпона
+        forbidden = requires_vagina | {
+            "lesbian", "milf", "squirt", "pregnant", "lactating",
+            "pussy licking", "pegging", "strap on",
+        }
         cats = [c for c in cats if c.lower() not in forbidden]
+
+    elif orientation == "shemale":
+        # Shemale (транс-женщина с пенисом):
+        # - Lesbian = только женщины, пениса нет → неверно
+        # - Gay = только мужчины → неверно
+        # - Pegging = проникновение страпоном → у шимейл реальный пенис, не страпон
+        # - Pregnant / Lactating → биологически невозможно для MTF
+        forbidden = {"lesbian", "gay", "pegging", "strap on", "pregnant", "lactating"}
+        cats = [c for c in cats if c.lower() not in forbidden]
+
     elif orientation == "straight":
-        # Для straight с lesbian тегом — убрать handjob/cumshot если lesbian присутствует
+        # Straight: не может быть gay-тегов
+        cats = [c for c in cats if c.lower() != "gay"]
+        # Если присутствует Lesbian — убрать теги требующие пениса
         if "lesbian" in cats_lower:
             cats = [c for c in cats if c.lower() not in requires_penis]
-    # shemale — может быть всё, не фильтруем жёстко
 
     cats_lower = {c.lower() for c in cats}
 
@@ -1097,7 +1111,7 @@ def process_video(video_path: str, output_dir: str, base_name: str) -> Dict:
         raw2a = call_vision_model(
             FRAME_PROMPT.format(frame_count=len(frames_2a), last_idx=len(frames_2a) - 1),
             frames_2a,
-            {"temperature": 0.3, "top_p": 0.80, "max_tokens": 700}
+            {"temperature": 0.3, "top_p": 0.80, "max_tokens": 1200}
         )
         p2a        = extract_json_from_response(raw2a)
         candidates_a = _parse_frame_candidates(p2a, frames_2a)
@@ -1109,7 +1123,7 @@ def process_video(video_path: str, output_dir: str, base_name: str) -> Dict:
         raw2b = call_vision_model(
             FRAME_PROMPT.format(frame_count=len(frames_2b), last_idx=len(frames_2b) - 1),
             frames_2b,
-            {"temperature": 0.3, "top_p": 0.80, "max_tokens": 700}
+            {"temperature": 0.3, "top_p": 0.80, "max_tokens": 1200}
         )
         p2b = extract_json_from_response(raw2b)
         candidates_b = _parse_frame_candidates(p2b, frames_2b)
@@ -1135,11 +1149,19 @@ def process_video(video_path: str, output_dir: str, base_name: str) -> Dict:
 
         thumb_frame = explicit_thumb if explicit_thumb is not None else (top5[0]["frame"] if top5 else None)
 
+        # # ── Распознавание исполнителей (опционально) ─────────────────────────────
+        # performers: List[str] = []
+        # if PERFORMER_RECOGNITION_AVAILABLE:
+        #     # Передаём кадры из обоих наборов для максимального покрытия лиц
+        #     performers = _identify_performers(frames_1a)
+        #     if performers:
+        #         logger.info(f"Performers identified: {performers}")
+        
         # ── Распознавание исполнителей (опционально) ─────────────────────────────
         performers: List[str] = []
         if PERFORMER_RECOGNITION_AVAILABLE:
-            # Передаём кадры из обоих наборов для максимального покрытия лиц
-            performers = _identify_performers(frames_1a)
+            frames_face = extract_key_frames(video_path, 100, start_at=skip4, end_at=end92)
+            performers = _identify_performers(frames_face)
             if performers:
                 logger.info(f"Performers identified: {performers}")
 

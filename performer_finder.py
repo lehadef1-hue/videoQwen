@@ -22,7 +22,7 @@ from PIL import Image
 logger = logging.getLogger("performer_finder")
 
 PERFORMER_DB_PATH  = os.getenv("PERFORMER_DB_PATH", "workspace/my_performers.pkl")
-MATCH_THRESHOLD    = float(os.getenv("PERFORMER_THRESHOLD", "0.42"))
+MATCH_THRESHOLD    = float(os.getenv("PERFORMER_THRESHOLD", "0.50"))
 CLUSTER_THRESHOLD  = 0.62   # cosine sim above this → same person
 MIN_DET_SCORE      = 0.55   # face detection confidence threshold
 
