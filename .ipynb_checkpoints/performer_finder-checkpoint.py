@@ -191,6 +191,7 @@ def identify_performers(
 
     centroids = cluster_embeddings(raw)
     matches = match_centroids(centroids, db)
-    names = [m["name"] for m in matches]
+    # names = [m["name"] for m in matches]
+    names = [f"{m['name']} ({round(m['score'] * 100)}%)" for m in matches]
     logger.info(f"Identified performers: {names}")
     return names

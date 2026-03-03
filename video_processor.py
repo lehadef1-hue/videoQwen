@@ -138,18 +138,6 @@
 # Return ONLY valid JSON, no markdown, no extra text:
 # {{"orientation":"straight","description":"...","categories":[...],"studio":null}}"""
 
-# # ─── Промпт 1b: дополнительные категории из второй половины ───────────────────
-# CATEGORIES_PROMPT = """You receive {frame_count} key frames from the SECOND HALF of a video.
-# Categories already found in the first half: [{existing}]
-
-# TASK: Look for any ADDITIONAL categories visible in THESE frames that are NOT already in the list above.
-# Use the same strict rules: only tag what is CLEARLY visible, not implied.
-# Return AT MOST 5 new categories.
-
-# Allowed categories (exact spelling): {categories_list}
-
-# Return ONLY valid JSON:
-# {{"categories":[...only NEW categories not already listed, max 5...]}}"""
 
 # # ─── Промпт 2: выбор лучших кадров (с оценкой) ────────────────────────────────
 # FRAME_PROMPT = """You receive {frame_count} frames (indexed 0 to {last_idx}) from a video.
@@ -212,7 +200,8 @@
 #         output = data.get("output", "").strip()
 #         logger.debug(f"Ответ модели: {len(output)} символов")
 #         return output
-#     except Exception as e:
+#     # except Exception as e:
+#     except Exception:
 #         logger.exception("Ошибка вызова модели")
 #         return ""
 
@@ -223,6 +212,9 @@
 
 #     def _try_parse(s: str) -> Optional[Dict]:
 #         s = re.sub(r',\s*(?=[}\]])', '', s).strip()
+#         # Fix: model puts "thumbnailIndex": N inside frames array instead of as sibling key
+#         # {"frames": [..., "thumbnailIndex": 3}  →  {"frames": [...], "thumbnailIndex": 3}
+#         s = re.sub(r'(?<!\]),\s*"thumbnailIndex":\s*(\d+)\s*\}\s*$', r'], "thumbnailIndex": \1}', s)
 #         try:
 #             return json.loads(s)
 #         except json.JSONDecodeError:
@@ -407,11 +399,10 @@
 #         mid = total_frames_count // 2
 #         skip4  = max(1, int(total_frames_count * 0.04))
 #         skip8  = max(1, int(total_frames_count * 0.08))
-#         end96  = total_frames_count - skip4
 #         end92  = total_frames_count - skip8
 
-#         # ── Pass 1a: теги + описание (первая половина) ──────────────────────────
-#         frames_1a = extract_key_frames(video_path, 25, start_at=skip4, end_at=mid)
+#         # ── Pass 1a: теги + описание (полное видео 4%–92%) ─────────────────────
+#         frames_1a = extract_key_frames(video_path, 25, start_at=skip4, end_at=end92)
 #         if len(frames_1a) < 4:
 #             return {"status": "skipped", "reason": "too few frames"}
 
@@ -436,29 +427,7 @@
 #         studio       = str(studio_raw).strip() if studio_raw and str(studio_raw).strip().lower() not in ("null", "none", "") else None
 #         logger.info(f"Pass 1a: orient={orientation} cats={len(cats_a)} studio={studio!r}")
 
-#         # ── Pass 1b: дополнительные теги (вторая половина) ──────────────────────
-#         frames_1b = extract_key_frames(video_path, 25, start_at=mid, end_at=end96)
-#         raw1b = call_vision_model(
-#             CATEGORIES_PROMPT.format(
-#                 frame_count=len(frames_1b),
-#                 existing=", ".join(cats_a) if cats_a else "none",
-#                 categories_list=", ".join(ALLOWED_CATEGORIES)
-#             ),
-#             frames_1b,
-#             {"temperature": 0.40, "top_p": 0.85, "max_tokens": 400}
-#         )
-#         p1b = extract_json_from_response(raw1b)
-#         cats_b = _normalize_cats((p1b or {}).get("categories", []))
-#         logger.info(f"Pass 1b: extra cats={len(cats_b)}")
-
-#         # Объединяем и валидируем категории
-#         merged_cats = cats_a.copy()
-#         seen_lower  = {c.lower() for c in merged_cats}
-#         for c in cats_b:
-#             if c.lower() not in seen_lower:
-#                 merged_cats.append(c)
-#                 seen_lower.add(c.lower())
-#         final_categories = validate_categories(merged_cats, orientation)
+#         final_categories = validate_categories(cats_a, orientation)
 
 #         # ── Pass 2a: выбор кадров (первая половина контента) ────────────────────
 #         frames_2a = extract_key_frames(video_path, 25, start_at=skip8, end_at=mid)
@@ -507,7 +476,7 @@
 #         performers: List[str] = []
 #         if PERFORMER_RECOGNITION_AVAILABLE:
 #             # Передаём кадры из обоих наборов для максимального покрытия лиц
-#             performers = _identify_performers(frames_1a + frames_1b)
+#             performers = _identify_performers(frames_1a)
 #             if performers:
 #                 logger.info(f"Performers identified: {performers}")
 
@@ -752,14 +721,14 @@ CRITICAL: "lesbian" is NOT a valid orientation — use "straight" instead.
 CRITICAL: if you see a penis on a femininely-built performer → shemale, not straight.
 
 --- DESCRIPTION ---
-Write exactly 2–3 sentences (max 60 words total) using raw explicit slang. Start directly with the action.
-NEVER start with "This video", "In this scene", "The video", etc.
-Be concise — do NOT list every detail, focus only on the main act.
+Write a vivid, explicit, dirty description (3-5 sentences). 
+Use raw, vulgar slang and dirty talk style. Describe the performers, their bodies, positions, actions in graphic detail. 
+Write like a horny human would describe the scene to a friend — be crude, playful and nasty. Do NOT be clinical or polite. 
+NEVER start with "This video", "In this video", "The video" or similar — jump straight into describing the action.
 
 --- CATEGORIES ---
 RULES — apply ALL strictly. Tag ONLY what is CLEARLY and VISUALLY CONFIRMED:
-Most videos have 5–10 tags. If you think you see more than 12, you are almost certainly hallucinating — stop and reconsider.
-Use ONLY tag names from this spelling reference (do NOT add tags just because they appear in this list): {categories_list}
+Write 5–10 tags. HARD MAXIMUM: 10. Use standard adult site category names.
 
 ACTS — only if clearly visible in multiple frames (not implied, not described):
   "Anal" = anal penetration by penis or toy, clearly in-frame
@@ -794,10 +763,9 @@ FORBIDDEN COMBINATIONS (auto-removed in post-processing anyway, but still):
   NO "Double Penetration" without two simultaneous penetrations visible by a penis
   NO "Gangbang" without "Group"
   NO "Solo" combined with group tags
-  NO "HD" (not a content category)
 
 WHEN IN DOUBT → OMIT. Fewer correct tags > many hallucinated tags.
-Return AT MOST 15 categories total. If you find more than 15, keep only the most clearly confirmed ones.
+Return AT MOST 10 categories total.
 
 --- STUDIO / WATERMARK ---
 Look for any STATIC text overlay, watermark, or logo visible across the frames.
@@ -812,7 +780,12 @@ Rules:
 
 --- OUTPUT ---
 Return ONLY valid JSON, no markdown, no extra text:
-{{"orientation":"straight","description":"...","categories":[...],"studio":null}}"""
+{{"orientation":"straight","description":"...","studio":null,"categories":[...]}}"""
+
+# --- DESCRIPTION ---
+# Write exactly 2–3 sentences (max 120 words total) using raw explicit slang. Start directly with the action.
+# NEVER start with "This video", "In this scene", "The video", etc.
+# Be concise — do NOT list every detail, focus only on the main act.
 
 
 # ─── Промпт 2: выбор лучших кадров (с оценкой) ────────────────────────────────
@@ -876,7 +849,8 @@ def call_vision_model(
         output = data.get("output", "").strip()
         logger.debug(f"Ответ модели: {len(output)} символов")
         return output
-    except Exception as e:
+    # except Exception as e:
+    except Exception:
         logger.exception("Ошибка вызова модели")
         return ""
 
@@ -924,6 +898,23 @@ def extract_json_from_response(text: str) -> Optional[Dict]:
         if result is not None:
             return result
 
+    # 3. Fallback: extract fields via regex from truncated JSON
+    result: Dict = {}
+    for key in ("orientation", "description", "studio"):
+        m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if m:
+            result[key] = m.group(1)
+        else:
+            m2 = re.search(rf'"{key}"\s*:\s*(null)', text)
+            if m2:
+                result[key] = None
+    cats_m = re.search(r'"categories"\s*:\s*\[([^\]]*)', text)
+    if cats_m:
+        result["categories"] = re.findall(r'"((?:[^"\\]|\\.)*)"', cats_m.group(1))
+    if result:
+        logger.warning("Used regex fallback to recover partial JSON")
+        return result
+
     logger.error("Failed to extract valid JSON from model response")
     logger.debug(f"Проблемный текст:\n{text[:800]}")
     return None
@@ -969,8 +960,8 @@ def validate_categories(categories: List[str], orientation: Optional[str]) -> Li
     if orientation == "gay" or ("lesbian" in {c.lower() for c in cats}):
         cats = [c for c in cats if c.lower() != "femdom"]
 
-    # Убрать "HD" — это не тег контента
-    cats = [c for c in cats if c.lower() != "hd"]
+    # # Убрать "HD" — это не тег контента
+    # cats = [c for c in cats if c.lower() != "hd"]
 
     return cats
 
@@ -1076,18 +1067,15 @@ def process_video(video_path: str, output_dir: str, base_name: str) -> Dict:
         skip8  = max(1, int(total_frames_count * 0.08))
         end92  = total_frames_count - skip8
 
-        # ── Pass 1a: теги + описание (первая половина) ──────────────────────────
-        frames_1a = extract_key_frames(video_path, 25, start_at=skip4, end_at=mid)
+        # ── Pass 1a: теги + описание (полное видео 4%–92%) ─────────────────────
+        frames_1a = extract_key_frames(video_path, 25, start_at=skip4, end_at=end92)
         if len(frames_1a) < 4:
             return {"status": "skipped", "reason": "too few frames"}
 
         raw1a = call_vision_model(
-            ANALYSIS_PROMPT.format(
-                frame_count=len(frames_1a),
-                categories_list=", ".join(ALLOWED_CATEGORIES)
-            ),
+            ANALYSIS_PROMPT.format(frame_count=len(frames_1a)),
             frames_1a,
-            {"temperature": 0.45, "top_p": 0.85, "max_tokens": 2000}
+            {"temperature": 0.45, "top_p": 0.85, "max_tokens": 1000}
         )
         p1a = extract_json_from_response(raw1a)
         if not p1a:
