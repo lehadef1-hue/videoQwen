@@ -782,4 +782,4 @@ async def analyze_url(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("video_processor_v2:app", host="0.0.0.0", port=8001, log_level="info", workers=1)
+    uvicorn.run("video_processor_v2:app", host="0.0.0.0", port=8000, log_level="info", workers=1)
