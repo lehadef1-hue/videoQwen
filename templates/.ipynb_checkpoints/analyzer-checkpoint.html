@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Video Analyzer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { font-family: 'JetBrains Mono', 'Fira Mono', 'Courier New', monospace; }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: #1e293b; }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+    select { -webkit-appearance: none; appearance: none; }
+    .spin { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .section-hidden { display: none !important; }
+  </style>
+</head>
+<body class="bg-slate-950 min-h-screen flex items-center justify-center p-4">
+
+  <div class="w-full max-w-5xl border-2 border-black shadow-2xl">
+    <div class="grid md:grid-cols-5">
+
+      <!-- ═══════════════════════ LEFT PANEL ═══════════════════════ -->
+      <div class="md:col-span-2 bg-slate-900 p-4 flex flex-col gap-3">
+
+        <!-- Header -->
+        <div class="flex items-center justify-between text-xs text-slate-400">
+          <span class="flex items-center gap-1">
+            <svg class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3"/></svg>
+            SOURCE
+          </span>
+          <span id="elTimer" class="text-slate-500">--:--</span>
+        </div>
+
+        <!-- Video preview area -->
+        <div class="relative bg-slate-800 rounded overflow-hidden flex items-center justify-center" style="height:268px">
+          <video id="elVideo" class="w-full h-full object-contain hidden" controls></video>
+
+          <div id="elPlaceholder" class="text-center pointer-events-none">
+            <svg class="w-10 h-10 text-white/30 mx-auto" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="2" y="6" width="14" height="12" rx="2"/>
+              <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/>
+            </svg>
+            <div class="text-[11px] text-white/25 mt-2" id="elFilename">no file selected</div>
+          </div>
+
+          <!-- Sparkle badge (shown after done) -->
+          <div id="elBadge" class="hidden absolute top-2 right-2 bg-green-500/20 text-green-400 text-[10px] px-2 py-0.5 flex items-center gap-1">
+            <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>
+            </svg>
+            <span id="elBadgeTime">0.0s</span>
+          </div>
+
+          <!-- Loading overlay -->
+          <div id="elLoading" class="hidden absolute inset-0 bg-black/75 flex flex-col items-center justify-center gap-2">
+            <svg class="spin w-8 h-8 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+              <path d="M12 2a10 10 0 0 1 10 10" stroke-linecap="round"/>
+            </svg>
+            <span id="elLoadingLabel" class="text-white/60 text-[11px]">Analyzing…</span>
+          </div>
+        </div>
+
+        <!-- Upload file -->
+        <label class="block cursor-pointer">
+          <input type="file" id="elFileInput" accept="video/*,.mp4,.mkv,.webm,.mov" class="hidden">
+          <div class="h-9 bg-red-600 hover:bg-red-700 active:bg-red-800 transition-colors text-white text-xs uppercase rounded flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            Upload Video File
+          </div>
+        </label>
+
+        <div class="text-[10px] text-white/25 text-center">or</div>
+
+        <!-- URL input -->
+        <div class="flex gap-2">
+          <input id="elUrl" type="text" placeholder="Paste Pornhub or Vidello URL…"
+            class="flex-1 px-3 py-2 bg-slate-800 border border-slate-600 text-white text-[11px] placeholder:text-slate-500 focus:outline-none focus:border-red-500 rounded">
+          <button id="btnUrl" onclick="analyzeUrl()"
+            class="h-9 w-9 bg-red-600 hover:bg-red-700 active:bg-red-800 text-white rounded flex items-center justify-center transition-colors disabled:opacity-40">
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Language -->
+        <div class="relative">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
+          </svg>
+          <select id="elLang" class="w-full pl-8 pr-8 py-2 bg-slate-800 border border-slate-600 text-white text-[11px] focus:outline-none focus:border-red-500 rounded cursor-pointer">
+            <option value="English">English</option>
+            <option value="Russian">Russian</option>
+            <option value="German">German</option>
+            <option value="French">French</option>
+            <option value="Spanish">Spanish</option>
+            <option value="Italian">Italian</option>
+            <option value="Portuguese">Portuguese</option>
+            <option value="Japanese">Japanese</option>
+          </select>
+          <svg class="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+
+        <!-- Style -->
+        <div class="relative">
+          <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/>
+            <circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/>
+            <path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/>
+          </svg>
+          <select id="elStyle" class="w-full pl-8 pr-8 py-2 bg-slate-800 border border-slate-600 text-white text-[11px] focus:outline-none focus:border-red-500 rounded cursor-pointer">
+            <option value="standard">Standard</option>
+            <option value="clean">Clean</option>
+            <option value="cinematic">Cinematic</option>
+          </select>
+          <svg class="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-slate-400 pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+
+        <!-- Analyze button (appears after file select) -->
+        <button id="btnAnalyze" onclick="analyzeFile()" class="hidden h-9 bg-red-600 hover:bg-red-700 active:bg-red-800 transition-colors text-white text-xs uppercase rounded flex items-center justify-center gap-2 disabled:opacity-40">
+          <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/>
+          </svg>
+          Analyze Video
+        </button>
+
+      </div>
+      <!-- end left panel -->
+
+      <!-- ═══════════════════════ RIGHT PANEL ══════════════════════ -->
+      <div class="md:col-span-3 bg-white flex flex-col" style="max-height:600px; overflow-y:auto">
+
+        <!-- Result header -->
+        <div class="sticky top-0 bg-white border-b border-slate-100 px-4 py-3 flex items-center justify-between z-10">
+          <span class="text-[10px] font-bold uppercase text-slate-500 tracking-widest">SEO Analysis Result</span>
+          <span id="elStatus" class="text-[10px] px-2 py-0.5 bg-slate-100 text-slate-500">READY</span>
+        </div>
+
+        <!-- Empty state -->
+        <div id="elEmpty" class="flex-1 flex flex-col items-center justify-center py-16 text-center px-6">
+          <svg class="w-14 h-14 text-slate-200 mb-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1">
+            <rect x="2" y="6" width="14" height="12" rx="2"/>
+            <path d="m16 13 5.223 3.482a.5.5 0 0 0 .777-.416V7.87a.5.5 0 0 0-.752-.432L16 10.5"/>
+          </svg>
+          <p class="text-xs text-slate-400">Upload a video or paste a URL to begin analysis</p>
+        </div>
+
+        <!-- Results -->
+        <div id="elResults" class="hidden px-4 py-4 space-y-5">
+
+          <!-- Meta Title -->
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <svg class="w-3 h-3 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+              <span class="text-[10px] text-slate-400 uppercase tracking-wider">Meta Title</span>
+              <span id="cntMetaTitle" class="text-[10px] text-slate-300"></span>
+              <button onclick="copy('metaTitleVal')" class="ml-auto text-[9px] text-slate-400 hover:text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded">copy</button>
+            </div>
+            <div id="metaTitleVal" class="p-2 bg-slate-50 border border-slate-200 text-sm text-slate-700 leading-snug"></div>
+          </div>
+
+          <!-- Meta Description -->
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <svg class="w-3 h-3 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg>
+              <span class="text-[10px] text-slate-400 uppercase tracking-wider">Meta Description</span>
+              <span id="cntMetaDesc" class="text-[10px] text-slate-300"></span>
+              <button onclick="copy('metaDescVal')" class="ml-auto text-[9px] text-slate-400 hover:text-slate-600 border border-slate-200 px-1.5 py-0.5 rounded">copy</button>
+            </div>
+            <div id="metaDescVal" class="p-2 bg-slate-50 border border-slate-200 text-sm text-slate-700 leading-snug"></div>
+          </div>
+
+          <!-- Orientation + Categories -->
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <svg class="w-3 h-3 text-purple-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>
+              <span class="text-[10px] text-slate-400 uppercase tracking-wider">Categories</span>
+              <span id="cntCats" class="text-[10px] text-slate-300"></span>
+              <span id="orientBadge" class="ml-auto text-[9px] px-2 py-0.5 rounded border font-medium uppercase"></span>
+            </div>
+            <div id="listCats" class="flex flex-wrap gap-1.5"></div>
+          </div>
+
+          <!-- Recognized Performers -->
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <svg class="w-3 h-3 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span class="text-[10px] text-slate-400 uppercase tracking-wider">Recognized Performers</span>
+              <span id="cntPerfs" class="text-[10px] text-slate-300"></span>
+            </div>
+            <div id="listPerfs" class="flex flex-wrap gap-1.5"></div>
+          </div>
+
+          <!-- Onscreen Text -->
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <svg class="w-3 h-3 text-orange-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg>
+              <span class="text-[10px] text-slate-400 uppercase tracking-wider">Onscreen Text</span>
+              <span id="cntWm" class="text-[10px] text-slate-300"></span>
+            </div>
+            <div id="listWm" class="flex flex-wrap gap-1.5"></div>
+          </div>
+
+          <!-- Key Scenes -->
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <svg class="w-3 h-3 text-teal-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              <span class="text-[10px] text-slate-400 uppercase tracking-wider">Key Scenes</span>
+              <span id="cntScenes" class="text-[10px] text-slate-300"></span>
+            </div>
+            <div id="listScenes" class="space-y-1.5"></div>
+          </div>
+
+          <!-- Best Thumbnails -->
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <svg class="w-3 h-3 text-yellow-500" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              <span class="text-[10px] text-slate-400 uppercase tracking-wider">Best Thumbnails</span>
+              <span id="cntThumbs" class="text-[10px] text-slate-300"></span>
+            </div>
+            <div id="listThumbs" class="flex gap-2"></div>
+          </div>
+
+          <!-- Primary Tags -->
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <svg class="w-3 h-3 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></svg>
+              <span class="text-[10px] text-slate-400 uppercase tracking-wider">Primary Tags</span>
+              <span id="cntPrimary" class="text-[10px] text-slate-300"></span>
+            </div>
+            <div id="listPrimary" class="flex flex-wrap gap-1.5"></div>
+          </div>
+
+          <!-- Secondary Tags (collapsible) -->
+          <div>
+            <button onclick="toggleSec('secondary')" class="flex items-center gap-2 mb-1.5 w-full text-left group">
+              <svg class="w-3 h-3 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/></svg>
+              <span class="text-[10px] text-slate-400 uppercase tracking-wider">Secondary Tags</span>
+              <span id="cntSecondary" class="text-[10px] text-slate-300"></span>
+              <svg id="chvSecondary" class="w-3 h-3 text-slate-400 ml-auto transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div id="bodySecondary" class="hidden">
+              <div id="listSecondary" class="flex flex-wrap gap-1.5"></div>
+            </div>
+          </div>
+
+          <!-- SEO Description (collapsible) -->
+          <div>
+            <button onclick="toggleSec('seoDesc')" class="flex items-center gap-2 mb-1.5 w-full text-left group">
+              <svg class="w-3 h-3 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 12H3"/><path d="M17 18H3"/><path d="M21 6H3"/></svg>
+              <span class="text-[10px] text-slate-400 uppercase tracking-wider">SEO Description</span>
+              <svg id="chvSeoDesc" class="w-3 h-3 text-slate-400 ml-auto transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 9 6 6 6-6"/></svg>
+            </button>
+            <div id="bodySeoDesc" class="hidden">
+              <div id="seoDescVal" class="p-2 bg-slate-50 border border-slate-200 text-sm text-slate-700 leading-relaxed whitespace-pre-wrap"></div>
+            </div>
+          </div>
+
+        </div>
+        <!-- end results -->
+
+      </div>
+      <!-- end right panel -->
+
+    </div>
+  </div>
+
+  <script>
+    let selectedFile = null;
+    let timerStart = null;
+    let timerTick = null;
+
+    // ── File select ─────────────────────────────────────────────────────────────
+    document.getElementById('elFileInput').addEventListener('change', function () {
+      const file = this.files[0];
+      if (!file) return;
+      selectedFile = file;
+      const vid = document.getElementById('elVideo');
+      vid.src = URL.createObjectURL(file);
+      vid.classList.remove('hidden');
+      document.getElementById('elPlaceholder').classList.add('hidden');
+      document.getElementById('elFilename').textContent = file.name;
+      document.getElementById('btnAnalyze').classList.remove('hidden');
+    });
+
+    // ── Timer ───────────────────────────────────────────────────────────────────
+    function startTimer() {
+      timerStart = Date.now();
+      timerTick = setInterval(() => {
+        document.getElementById('elTimer').textContent = ((Date.now() - timerStart) / 1000).toFixed(1) + 's';
+      }, 200);
+    }
+    function stopTimer() {
+      clearInterval(timerTick);
+      const elapsed = ((Date.now() - timerStart) / 1000).toFixed(1);
+      document.getElementById('elBadgeTime').textContent = elapsed + 's';
+      document.getElementById('elBadge').classList.remove('hidden');
+    }
+
+    // ── Loading state ───────────────────────────────────────────────────────────
+    function setLoading(on, label) {
+      document.getElementById('elLoading').classList.toggle('hidden', !on);
+      document.getElementById('elLoadingLabel').textContent = label || 'Analyzing…';
+      document.getElementById('btnAnalyze').disabled = on;
+      document.getElementById('btnUrl').disabled = on;
+    }
+    function setStatus(text, cls) {
+      const el = document.getElementById('elStatus');
+      el.textContent = text;
+      el.className = 'text-[10px] px-2 py-0.5 ' + cls;
+    }
+
+    // ── Poll task until done ─────────────────────────────────────────────────────
+    let _pollTimer = null;
+    function startPolling(taskId) {
+      _pollTimer = setInterval(async function() {
+        try {
+          const res = await fetch('/v2/status/' + taskId);
+          const data = await res.json();
+          if (data.status === 'processing') {
+            document.getElementById('elLoadingLabel').textContent = data.stage || 'Analyzing…';
+            return; // keep polling
+          }
+          clearInterval(_pollTimer);
+          stopTimer();
+          setLoading(false);
+          try { renderResult(data); }
+          catch (re) { setStatus('JS ERR: ' + re.message, 'text-[10px] px-2 py-0.5 bg-red-100 text-red-700'); console.error('renderResult', re); }
+        } catch (e) {
+          clearInterval(_pollTimer);
+          stopTimer();
+          setLoading(false);
+          setStatus('POLL ERR: ' + e.message, 'text-[10px] px-2 py-0.5 bg-red-100 text-red-700');
+          console.error('poll', e);
+        }
+      }, 2000);
+    }
+
+    // ── Analyze uploaded file ───────────────────────────────────────────────────
+    async function analyzeFile() {
+      if (!selectedFile) return;
+      const fd = new FormData();
+      fd.append('files', selectedFile);
+      fd.append('language', document.getElementById('elLang').value);
+      fd.append('style', document.getElementById('elStyle').value);
+      setLoading(true, 'Uploading…');
+      setStatus('PROCESSING', 'text-[10px] px-2 py-0.5 bg-yellow-100 text-yellow-700');
+      startTimer();
+      try {
+        const res = await fetch('/v2/analyze-upload', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.task_id) {
+          setLoading(true, 'Analyzing…');
+          startPolling(data.task_id);
+        } else {
+          stopTimer();
+          setLoading(false);
+          try { renderResult(data); }
+          catch (re) { setStatus('JS ERR: ' + re.message, 'text-[10px] px-2 py-0.5 bg-red-100 text-red-700'); console.error('renderResult', re); }
+        }
+      } catch (e) {
+        stopTimer();
+        setLoading(false);
+        setStatus('FETCH ERR: ' + e.message, 'text-[10px] px-2 py-0.5 bg-red-100 text-red-700');
+        console.error('fetch', e);
+      }
+    }
+
+    // ── Analyze URL ─────────────────────────────────────────────────────────────
+    async function analyzeUrl() {
+      const url = document.getElementById('elUrl').value.trim();
+      if (!url) return;
+      const fd = new FormData();
+      fd.append('url', url);
+      fd.append('language', document.getElementById('elLang').value);
+      fd.append('style', document.getElementById('elStyle').value);
+      setLoading(true, 'Downloading…');
+      setStatus('DOWNLOADING', 'text-[10px] px-2 py-0.5 bg-yellow-100 text-yellow-700');
+      startTimer();
+      try {
+        const res = await fetch('/v2/analyze-url', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.task_id) {
+          setLoading(true, 'Analyzing…');
+          setStatus('PROCESSING', 'text-[10px] px-2 py-0.5 bg-yellow-100 text-yellow-700');
+          startPolling(data.task_id);
+        } else {
+          stopTimer();
+          setLoading(false);
+          try { renderResult(data); }
+          catch (re) { setStatus('JS ERR: ' + re.message, 'text-[10px] px-2 py-0.5 bg-red-100 text-red-700'); console.error('renderResult', re); }
+        }
+      } catch (e) {
+        stopTimer();
+        setLoading(false);
+        setStatus('FETCH ERR: ' + e.message, 'text-[10px] px-2 py-0.5 bg-red-100 text-red-700');
+        console.error('fetch', e);
+      }
+    }
+
+    // ── Collapsible sections ────────────────────────────────────────────────────
+    function toggleSec(id) {
+      document.getElementById('body' + id.charAt(0).toUpperCase() + id.slice(1)).classList.toggle('hidden');
+      const chv = document.getElementById('chv' + id.charAt(0).toUpperCase() + id.slice(1));
+      if (chv) chv.classList.toggle('rotate-180');
+    }
+
+    // ── Copy text ───────────────────────────────────────────────────────────────
+    function copy(id) {
+      const text = document.getElementById(id).textContent;
+      navigator.clipboard.writeText(text).catch(() => {});
+    }
+
+    // ── Stars helper ────────────────────────────────────────────────────────────
+    function stars(score) {
+      const n = Math.max(1, Math.min(5, Math.round((score || 5) / 2)));
+      return Array(n).fill('<svg class="w-2 h-2 text-yellow-400 fill-yellow-400" viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>').join('');
+    }
+
+    // ── Render result ───────────────────────────────────────────────────────────
+    function renderResult(data) {
+      if (data.status !== 'ok') {
+        setStatus('ERROR: ' + (data.reason || 'unknown'), 'text-[10px] px-2 py-0.5 bg-red-100 text-red-700');
+        return;
+      }
+      setStatus('DONE', 'text-[10px] px-2 py-0.5 bg-green-100 text-green-700');
+
+      document.getElementById('elEmpty').classList.add('hidden');
+      document.getElementById('elResults').classList.remove('hidden');
+
+      // Meta Title
+      const mt = data.meta_title || '';
+      document.getElementById('metaTitleVal').textContent = mt;
+      document.getElementById('cntMetaTitle').textContent = `(${mt.length} chars)`;
+
+      // Meta Description
+      const md = data.meta_description || '';
+      document.getElementById('metaDescVal').textContent = md;
+      document.getElementById('cntMetaDesc').textContent = `(${md.length} chars)`;
+
+      // Orientation badge
+      const orient = (data.orientation || '').toLowerCase();
+      const ob = document.getElementById('orientBadge');
+      const orientStyles = {
+        straight: 'bg-pink-50 border-pink-200 text-pink-700',
+        gay:      'bg-blue-50 border-blue-200 text-blue-700',
+        shemale:  'bg-violet-50 border-violet-200 text-violet-700',
+      };
+      ob.textContent = orient || '—';
+      ob.className = 'ml-auto text-[9px] px-2 py-0.5 rounded border font-medium uppercase ' + (orientStyles[orient] || 'bg-slate-100 border-slate-200 text-slate-500');
+
+      // Categories
+      const cats = data.categories || [];
+      document.getElementById('cntCats').textContent = `(${cats.length})`;
+      document.getElementById('listCats').innerHTML = cats.length
+        ? cats.map(c => `<span class="px-2 py-1 bg-purple-50 border border-purple-200 text-xs text-purple-700">${esc(c)}</span>`).join('')
+        : '<span class="text-xs text-slate-400">—</span>';
+
+      // Performers
+      const perfs = data.performers || [];
+      document.getElementById('cntPerfs').textContent = `(${perfs.length})`;
+      document.getElementById('listPerfs').innerHTML = perfs.length
+        ? perfs.map(p => {
+            const s = p.score || 0;
+            const badge = s >= 80 ? 'bg-green-100 text-green-700' : s >= 65 ? 'bg-yellow-100 text-yellow-700' : 'bg-slate-100 text-slate-600';
+            return `<span class="px-2 py-1 bg-blue-50 border border-blue-200 text-xs text-blue-700 flex items-center gap-1.5">
+              <svg class="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              ${esc(p.name)}<span class="text-[9px] px-1 py-0.5 rounded ${badge}">${s}%</span>
+            </span>`;
+          }).join('')
+        : '<span class="text-xs text-slate-400">none detected</span>';
+
+      // Watermarks
+      const wms = data.watermarks || [];
+      document.getElementById('cntWm').textContent = `(${wms.length})`;
+      document.getElementById('listWm').innerHTML = wms.length
+        ? wms.map(w => `<span class="px-2 py-1 bg-orange-50 border border-orange-200 text-xs text-orange-700">${esc(w)}</span>`).join('')
+        : '<span class="text-xs text-slate-400">none detected</span>';
+
+      // Key Scenes
+      const scenes = data.key_scenes || [];
+      document.getElementById('cntScenes').textContent = `(${scenes.length})`;
+      document.getElementById('listScenes').innerHTML = scenes.length
+        ? scenes.map(s => `
+            <div class="flex items-start gap-2">
+              <span class="flex-shrink-0 px-1.5 py-0.5 bg-teal-50 border border-teal-200 text-[10px] text-teal-700 mt-0.5 whitespace-nowrap">${esc(s.formatted || String(s.ts))}</span>
+              <span class="text-[11px] text-slate-600 leading-snug">${esc(s.desc)}</span>
+            </div>`).join('')
+        : '<span class="text-xs text-slate-400">—</span>';
+
+      // Thumbnails (top 3)
+      const frames = data.frames || [];
+      const thumbs = frames.slice(0, 3);
+      document.getElementById('cntThumbs').textContent = `(${thumbs.length})`;
+      document.getElementById('listThumbs').innerHTML = thumbs.map(function(f) {
+        var imgEl = f.url
+          ? '<img src="' + f.url + '" class="w-full h-full object-cover" loading="lazy">'
+          : '<div class="w-full h-full flex items-center justify-center"><svg class="w-4 h-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="6" width="14" height="12" rx="2"/></svg></div>';
+        return '<div class="flex-1 border border-slate-200 bg-slate-50 overflow-hidden min-w-0">'
+          + '<div class="w-full bg-slate-200 overflow-hidden" style="aspect-ratio:16/9">' + imgEl + '</div>'
+          + '<div class="px-1.5 py-1 flex items-center justify-between gap-1">'
+          + '<span class="text-[10px] text-teal-700">' + esc(f.ts_fmt || '') + '</span>'
+          + '<div class="flex items-center gap-0.5">' + stars(f.score) + '</div>'
+          + '</div></div>';
+      }).join('');
+
+      // Primary Tags
+      const pt = data.primary_tags || [];
+      document.getElementById('cntPrimary').textContent = `(${pt.length})`;
+      document.getElementById('listPrimary').innerHTML = pt.length
+        ? pt.map(t => `<span class="px-2 py-1 bg-red-50 border border-red-200 text-xs text-red-700">${esc(t)}</span>`).join('')
+        : '<span class="text-xs text-slate-400">—</span>';
+
+      // Secondary Tags
+      const st = data.secondary_tags || [];
+      document.getElementById('cntSecondary').textContent = `(${st.length})`;
+      document.getElementById('listSecondary').innerHTML = st.length
+        ? st.map(t => `<span class="px-2 py-1 bg-slate-100 border border-slate-200 text-xs text-slate-600">${esc(t)}</span>`).join('')
+        : '<span class="text-xs text-slate-400">—</span>';
+
+      // SEO Description
+      document.getElementById('seoDescVal').textContent = data.seo_description || '—';
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+  </script>
+</body>
+</html>
