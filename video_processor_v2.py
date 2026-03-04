@@ -111,7 +111,7 @@ Write 5–10 tags. HARD MAXIMUM: 10. Use standard adult site category names.
 
 ACTS — only if clearly visible in multiple frames (not implied, not described):
   "Anal" = anal penetration by penis or toy, clearly in-frame
-  "Double Penetration" = two simultaneous penetrations visible at same time
+  "Double Penetration" = TWO simultaneous penetrations visible at the SAME TIME — NOT about performer count, purely about 2 orifices penetrated simultaneously
   "Fisting" = entire fist inside body, clearly visible — very rare, be strict
   "Squirt" = fluid ejaculation from vagina clearly shown
   "Creampie" = cum visibly dripping from vagina/anus after internal finish
@@ -124,14 +124,14 @@ ACTS — only if clearly visible in multiple frames (not implied, not described)
   "Handjob" = hand on penis, clearly visible
   "Pegging" = woman penetrates man with strap-on
 
-GROUPS:
-  "Solo" = one performer alone throughout
-  "Threesome" = exactly 3 performers
-  "Group" = 4+ performers together
-  "Gangbang" = 3+ on 1 — ALSO add "Group"
-  "Lesbian" = female-female only, no males present at all
-  "Bisexual Male" = male performs sex with both male AND female
-  "Femdom" = female dominant, male visibly submissive
+GROUPS — count only performers ACTIVELY PARTICIPATING in sex acts, NOT bystanders or people merely visible in frame:
+  "Solo" = one performer actively performing alone throughout — no other participant at all
+  "Threesome" = exactly 3 performers all actively participating in the same scene
+  "Group" = 4+ performers all actively participating together
+  "Gangbang" = 3+ performers actively on 1 — ALSO add "Group"
+  "Lesbian" = female-female ONLY, all actively having sex — zero males participating
+  "Bisexual Male" = one male ACTIVELY has sex with both a male AND a female in the same scene
+  "Femdom" = female actively dominating, male visibly submissive — both must be active participants
 
 APPEARANCE — only if unmistakably, obviously present:
   "Big Tits" / "Big Ass" / "Big Dick" / "BBW" = clearly larger than average
@@ -406,7 +406,7 @@ def validate_categories(categories: List[str], orientation: Optional[str]) -> Li
     cats_lower = {c.lower() for c in cats}
 
     if not any(x in cats_lower for x in ["group", "threesome", "gangbang"]):
-        cats = [c for c in cats if c.lower() not in {"double penetration", "bisexual male"}]
+        cats = [c for c in cats if c.lower() != "bisexual male"]
 
     if "gangbang" in cats_lower and "group" not in cats_lower:
         cats = [c for c in cats if c.lower() != "gangbang"]
