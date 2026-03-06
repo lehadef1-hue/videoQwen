@@ -240,46 +240,6 @@ seo_description: {seo_description}
 {{"meta_title":"...","meta_description":"...","seo_description":"..."}}"""
 
 
-FRAME_PROMPT = """You receive {frame_count} frames (indexed 0 to {last_idx}) from a video.
-
-TASK: Score and select the 5 best frames for display quality.
-
-SCORING — start at 10, subtract:
-  -5 if ANY performer has closed eyes
-  -4 if image is blurry (motion blur, out-of-focus)
-  -3 if any performer's face is not fully visible or cut off
-  -2 if image is dark or overexposed
-  -1 if no explicit sexual act is clearly visible
-
-SELECTION:
-  - Evaluate all frames
-  - Pick exactly 5 with HIGHEST scores (or all if fewer than 5 available)
-  - For each selected frame: return index (0-based), score (1-10), reason (5–15 words)
-
---- OUTPUT ---
-Return ONLY valid JSON, no markdown, no extra text:
-{{"frames":[{{"index":3,"score":8,"reason":"..."}},...]}}"""
-
-
-FINAL_FRAME_PROMPT = """You receive {frame_count} frames (indexed 0 to {last_idx}).
-These are already pre-selected as the BEST candidates from the full video.
-
-TASK: Pick the final 5 frames for display + 1 thumbnail.
-
-SELECTION RULES:
-  - Choose exactly 5 frames (or fewer if less than 5 available)
-  - VARIETY is the top priority: different acts, positions, angles, moments
-  - Still reject: closed eyes (-5), blurry (-4), face cut off (-3), dark/overexposed (-2)
-  - Re-score each chosen frame 1–10
-  - For each: return index (0-based), score (1-10), reason (5–15 words)
-
-THUMBNAIL (1 frame from your 5):
-  - Best overall quality: sharp, eye contact, explicit action clearly visible
-
---- OUTPUT ---
-Return ONLY valid JSON, no markdown, no extra text:
-{{"frames":[{{"index":3,"score":9,"reason":"..."}},...],  "thumbnailIndex":3}}"""
-
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -532,31 +492,6 @@ def validate_categories(categories: List[str], orientation: Optional[str]) -> Li
     return cats
 
 
-def _parse_frame_candidates(
-    parsed: Optional[Dict],
-    frames: List[Image.Image],
-    timestamps: Optional[List[Optional[float]]] = None,
-) -> List[Dict]:
-    if not parsed:
-        return []
-    result = []
-    for item in parsed.get("frames", []):
-        idx = item.get("index")
-        if not isinstance(idx, int) or idx < 0 or idx >= len(frames):
-            continue
-        c: Dict = {
-            "frame": frames[idx],
-            "score": int(item.get("score", 5)),
-            "reason": str(item.get("reason", ""))[:80],
-            "ts": None,
-            "ts_fmt": "",
-        }
-        if timestamps and idx < len(timestamps) and timestamps[idx] is not None:
-            c["ts"] = float(round(timestamps[idx], 1))
-            c["ts_fmt"] = _fmt_ts(timestamps[idx])
-        result.append(c)
-    return result
-
 
 def _seo_fallback(text: str) -> Dict:
     """Extract SEO fields from truncated/malformed JSON via regex."""
@@ -594,7 +529,6 @@ def process_video_v2(
         cap = cv2.VideoCapture(video_path)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         cap.release()
-        mid   = total_frames // 2
         skip4 = max(1, int(total_frames * 0.04))
         skip8 = max(1, int(total_frames * 0.08))
         end92 = total_frames - skip8
@@ -643,50 +577,9 @@ def process_video_v2(
         final_categories = validate_categories(cats_raw, orientation)
         logger.info(f"Pass 1: orient={orientation} cats={len(final_categories)} watermarks={watermarks} scenes={len(key_scenes)}")
 
-        # ── Pass 2a: Frame scoring first half ───────────────────────────────────
-        frames_2a, ts_2a = extract_key_frames_ts(video_path, 25, start_at=skip8, end_at=mid)
-        raw2a = call_vision_model(
-            FRAME_PROMPT.format(frame_count=len(frames_2a), last_idx=len(frames_2a) - 1),
-            frames_2a,
-            {"temperature": 0.3, "top_p": 0.80, "max_tokens": 1536},
-        )
-        candidates_a = _parse_frame_candidates(extract_json_from_response(raw2a), frames_2a, ts_2a)
-        logger.info(f"Pass 2a: candidates={len(candidates_a)}")
-
-        # ── Pass 2b: Frame scoring second half ──────────────────────────────────
-        frames_2b, ts_2b = extract_key_frames_ts(video_path, 25, start_at=mid, end_at=end92)
-        raw2b = call_vision_model(
-            FRAME_PROMPT.format(frame_count=len(frames_2b), last_idx=len(frames_2b) - 1),
-            frames_2b,
-            {"temperature": 0.3, "top_p": 0.80, "max_tokens": 1536},
-        )
-        candidates_b = _parse_frame_candidates(extract_json_from_response(raw2b), frames_2b, ts_2b)
-        logger.info(f"Pass 2b: candidates={len(candidates_b)}")
-
-        # ── Merge → Pass 3: Final selection ────────────────────────────────────
-        all_cands = sorted(candidates_a + candidates_b, key=lambda x: x["score"], reverse=True)
-        top10 = all_cands[:10]
-        top5  = top10[:5]
-        thumb_frame = top10[0]["frame"] if top10 else None
-
-        if top10:
-            frames_3 = [c["frame"] for c in top10]
-            ts_3     = [c.get("ts") for c in top10]
-            raw3 = call_vision_model(
-                FINAL_FRAME_PROMPT.format(frame_count=len(frames_3), last_idx=len(frames_3) - 1),
-                frames_3,
-                {"temperature": 0.3, "top_p": 0.80, "max_tokens": 1536},
-            )
-            p3 = extract_json_from_response(raw3)
-            cands_3 = _parse_frame_candidates(p3, frames_3, ts_3)
-            thumb_idx_3 = (p3 or {}).get("thumbnailIndex")
-            if cands_3:
-                top5 = sorted(cands_3, key=lambda x: x["score"], reverse=True)[:5]
-                if isinstance(thumb_idx_3, int) and 0 <= thumb_idx_3 < len(frames_3):
-                    thumb_frame = frames_3[thumb_idx_3]
-                elif top5:
-                    thumb_frame = top5[0]["frame"]
-            logger.info(f"Pass 3: candidates={len(cands_3)}")
+        # Screenshot selection disabled
+        top5 = []
+        thumb_frame = None
 
         # ── Pass SEO (multi-language) ────────────────────────────────────────
         final_categories = final_categories[:category_count]
@@ -1174,4 +1067,4 @@ async def api_task_status(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("video_processor_v3:app", host="0.0.0.0", port=8000, log_level="info", workers=1)
+    uvicorn.run("video_processor_v4:app", host="0.0.0.0", port=8000, log_level="info", workers=1)

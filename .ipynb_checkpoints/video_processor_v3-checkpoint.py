@@ -67,6 +67,32 @@ ALLOWED_CATEGORIES = [
 ALLOWED_CATEGORIES_LOWER = {c.lower(): c for c in ALLOWED_CATEGORIES}
 VALID_ORIENTATIONS = {"straight", "gay", "shemale"}
 
+# ─── Content blocklist ────────────────────────────────────────────────────────
+_CONTENT_BLOCKLIST = frozenset({
+    "abused", "asphyxia", "behead", "bleed", "blood", "child", "children",
+    "choke", "choking", "decapitation", "drugged", "forced", "hidden cam",
+    "kid", "kill", "leaked", "loli", "l.o.l.i", "murder", "rape", "shota",
+    "snuff", "strangle", "torture", "upskirt", "downblouse", "scat", "cp",
+    "gore", "15yo", "16yo", "17yo",
+})
+_BLOCKED_RE = re.compile(
+    "|".join(r"\b" + re.escape(w) + r"\b" for w in sorted(_CONTENT_BLOCKLIST, key=len, reverse=True)),
+    re.IGNORECASE,
+)
+
+def _contains_blocked(text: str) -> bool:
+    return bool(_BLOCKED_RE.search(text))
+
+def _redact_blocked(text: str) -> str:
+    return _BLOCKED_RE.sub("***", text)
+
+def _filter_blocked_list(items: List[str]) -> List[str]:
+    filtered = [item for item in items if not _contains_blocked(item)]
+    if len(filtered) < len(items):
+        logger.warning(f"Blocked {len(items) - len(filtered)} item(s) from list")
+    return filtered
+
+
 DESCRIPTION_STYLES = {
     "standard": (
         "Write a vivid, explicit, dirty description (3–5 sentences). "
@@ -201,7 +227,10 @@ Return ONLY valid JSON, no markdown. All text in {language}.
 
 def build_seo_translate_prompt(meta_title: str, meta_desc: str, seo_description: str, language: str) -> str:
     return f"""Translate the following adult video SEO texts into {language}.
-Keep the meaning, tone, and keywords accurate. Return ONLY valid JSON, no markdown.
+Rules:
+- Keep meaning, tone, and keywords accurate.
+- seo_description must stay under 150 words. Do NOT add new sentences. Do NOT repeat any phrase.
+- Return ONLY valid JSON, no markdown, no extra text.
 
 SOURCE TEXTS:
 meta_title: {meta_title}
@@ -342,6 +371,16 @@ def extract_json_from_response(text: str) -> Optional[Dict]:
     cats_m = re.search(r'"categories"\s*:\s*\[([^\]]*)', text)
     if cats_m:
         result["categories"] = re.findall(r'"((?:[^"\\]|\\.)*)"', cats_m.group(1))
+    # Extract key_scenes objects individually
+    scenes = []
+    for scene_m in re.finditer(r'\{[^{}]*"frame"\s*:\s*(\d+)[^{}]*"desc"\s*:\s*"((?:[^"\\]|\\.)*)"[^{}]*\}', text):
+        scenes.append({"frame": int(scene_m.group(1)), "desc": scene_m.group(2)})
+    if not scenes:
+        # also try desc before frame order
+        for scene_m in re.finditer(r'\{[^{}]*"desc"\s*:\s*"((?:[^"\\]|\\.)*)"[^{}]*"frame"\s*:\s*(\d+)[^{}]*\}', text):
+            scenes.append({"frame": int(scene_m.group(2)), "desc": scene_m.group(1)})
+    if scenes:
+        result["key_scenes"] = scenes
     if result:
         logger.warning("Used regex fallback for JSON")
         return result
@@ -519,6 +558,24 @@ def _parse_frame_candidates(
     return result
 
 
+def _seo_fallback(text: str) -> Dict:
+    """Extract SEO fields from truncated/malformed JSON via regex."""
+    result: Dict = {}
+    for key in ("meta_title", "meta_description", "seo_description"):
+        m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
+        if m:
+            result[key] = m.group(1)
+    for key in ("primary_tags", "secondary_tags"):
+        m = re.search(rf'"{key}"\s*:\s*\[([^\]]*)', text)
+        if m:
+            items = re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(1))
+            if items:
+                result[key] = items
+    if result:
+        logger.warning(f"SEO regex fallback used — recovered: {list(result.keys())}")
+    return result
+
+
 # ─── Core processor ───────────────────────────────────────────────────────────
 
 def process_video_v2(
@@ -553,28 +610,34 @@ def process_video_v2(
         raw1 = call_vision_model(
             build_analysis_prompt(len(frames_1a), ts_map, desc_style, language),
             frames_1a,
-            {"temperature": 0.45, "top_p": 0.85, "max_tokens": 1400},
+            {"temperature": 0.45, "top_p": 0.85, "max_tokens": 2048},
         )
         p1 = extract_json_from_response(raw1)
         if not p1:
             return {"status": "error", "reason": "pass1 invalid response"}
 
-        description = p1.get("description", "").strip()
+        description = _redact_blocked(p1.get("description", "").strip())
         orientation = p1.get("orientation", "straight")
         if orientation not in VALID_ORIENTATIONS:
             orientation = "straight"
-        cats_raw   = _normalize_cats(p1.get("categories", []))[:15]
+        cats_raw   = _filter_blocked_list(_normalize_cats(p1.get("categories", []))[:15])
         watermarks = [str(w).strip() for w in (p1.get("watermarks") or []) if str(w).strip()]
 
         # Convert key scene frame indices → timestamps
         key_scenes = []
+        _seen_scene_descs: set = set()
         for ks in (p1.get("key_scenes") or [])[:8]:
             fi = ks.get("frame")
             if isinstance(fi, int) and 0 <= fi < len(ts_1a):
+                desc = str(ks.get("desc", "")).strip()
+                desc_key = desc.lower()[:80]
+                if desc_key in _seen_scene_descs:
+                    continue
+                _seen_scene_descs.add(desc_key)
                 key_scenes.append({
                     "ts": float(round(ts_1a[fi], 1)),
                     "formatted": _fmt_ts(ts_1a[fi]),
-                    "desc": str(ks.get("desc", "")).strip(),
+                    "desc": desc,
                 })
 
         final_categories = validate_categories(cats_raw, orientation)
@@ -585,7 +648,7 @@ def process_video_v2(
         raw2a = call_vision_model(
             FRAME_PROMPT.format(frame_count=len(frames_2a), last_idx=len(frames_2a) - 1),
             frames_2a,
-            {"temperature": 0.3, "top_p": 0.80, "max_tokens": 1200},
+            {"temperature": 0.3, "top_p": 0.80, "max_tokens": 1536},
         )
         candidates_a = _parse_frame_candidates(extract_json_from_response(raw2a), frames_2a, ts_2a)
         logger.info(f"Pass 2a: candidates={len(candidates_a)}")
@@ -595,7 +658,7 @@ def process_video_v2(
         raw2b = call_vision_model(
             FRAME_PROMPT.format(frame_count=len(frames_2b), last_idx=len(frames_2b) - 1),
             frames_2b,
-            {"temperature": 0.3, "top_p": 0.80, "max_tokens": 1200},
+            {"temperature": 0.3, "top_p": 0.80, "max_tokens": 1536},
         )
         candidates_b = _parse_frame_candidates(extract_json_from_response(raw2b), frames_2b, ts_2b)
         logger.info(f"Pass 2b: candidates={len(candidates_b)}")
@@ -612,7 +675,7 @@ def process_video_v2(
             raw3 = call_vision_model(
                 FINAL_FRAME_PROMPT.format(frame_count=len(frames_3), last_idx=len(frames_3) - 1),
                 frames_3,
-                {"temperature": 0.3, "top_p": 0.80, "max_tokens": 1200},
+                {"temperature": 0.3, "top_p": 0.80, "max_tokens": 1536},
             )
             p3 = extract_json_from_response(raw3)
             cands_3 = _parse_frame_candidates(p3, frames_3, ts_3)
@@ -650,37 +713,33 @@ def process_video_v2(
             build_seo_prompt(description, final_categories, orientation, p_lang_name,
                              tag_count, secondary_tag_count),
             seo_ref,
-            {"temperature": 0.3, "top_p": 0.85, "max_tokens": 900 + tag_count * 30},
+            {"temperature": 0.3, "top_p": 0.85, "max_tokens": 4096},
         )
-        p_seo = extract_json_from_response(raw_seo) or {}
-        primary_tags  = [t.strip() for t in p_seo.get("primary_tags", []) if t.strip()][:tag_count]
-        secondary_tags = [t.strip() for t in p_seo.get("secondary_tags", []) if t.strip()][:secondary_tag_count]
+        p_seo = extract_json_from_response(raw_seo) or _seo_fallback(raw_seo or "")
+        primary_tags   = _filter_blocked_list([t.strip() for t in p_seo.get("primary_tags", []) if t.strip()][:tag_count])
+        secondary_tags = _filter_blocked_list([t.strip() for t in p_seo.get("secondary_tags", []) if t.strip()][:secondary_tag_count])
         seo_by_lang[p_lang_code] = {
-            "meta_title":       p_seo.get("meta_title", "").strip(),
-            "meta_description": p_seo.get("meta_description", "").strip(),
-            "primary_tags":     primary_tags,
-            "secondary_tags":   secondary_tags,
-            "seo_description":  p_seo.get("seo_description", "").strip(),
+            "meta_title":       _redact_blocked(p_seo.get("meta_title", "").strip()),
+            "meta_description": _redact_blocked(p_seo.get("meta_description", "").strip()),
+            "seo_description":  _redact_blocked(p_seo.get("seo_description", "").strip()),
         }
         logger.info(f"Pass SEO [{p_lang_code}]: title={len(seo_by_lang[p_lang_code]['meta_title'])}")
 
         # Extra languages — translate only meta_title, meta_description, seo_description
-        base_title   = seo_by_lang[p_lang_code]["meta_title"]
-        base_meta    = seo_by_lang[p_lang_code]["meta_description"]
+        base_title    = seo_by_lang[p_lang_code]["meta_title"]
+        base_meta     = seo_by_lang[p_lang_code]["meta_description"]
         base_seo_desc = seo_by_lang[p_lang_code]["seo_description"]
         for lang_code, lang_name in all_langs[1:]:
             raw_tr = call_vision_model(
                 build_seo_translate_prompt(base_title, base_meta, base_seo_desc, lang_name),
                 seo_ref,
-                {"temperature": 0.2, "top_p": 0.80, "max_tokens": 600},
+                {"temperature": 0.2, "top_p": 0.80, "max_tokens": 1024},
             )
             p_tr = extract_json_from_response(raw_tr) or {}
             seo_by_lang[lang_code] = {
-                "meta_title":       p_tr.get("meta_title", "").strip(),
-                "meta_description": p_tr.get("meta_description", "").strip(),
-                "primary_tags":     primary_tags,    # same tags for all languages
-                "secondary_tags":   secondary_tags,
-                "seo_description":  p_tr.get("seo_description", "").strip(),
+                "meta_title":       _redact_blocked(p_tr.get("meta_title", "").strip()),
+                "meta_description": _redact_blocked(p_tr.get("meta_description", "").strip()),
+                "seo_description":  _redact_blocked(p_tr.get("seo_description", "").strip()),
             }
             logger.info(f"Pass SEO translate [{lang_code}]: title={len(seo_by_lang[lang_code]['meta_title'])}")
 
@@ -870,6 +929,10 @@ def _run_task(task_id: str, fn, *args, webhook_url: str = "", **kwargs):
             logger.info(f"Webhook fired → {webhook_url} | status={wh.status_code} | response={wh.text[:5000]}")
         except Exception as e:
             logger.warning(f"Webhook failed: {e}")
+        run_dir_to_clean = result.get("_run_dir")
+        if run_dir_to_clean:
+            shutil.rmtree(run_dir_to_clean, ignore_errors=True)
+            logger.info(f"Cleaned up output dir: {run_dir_to_clean}")
 
 
 # ─── FastAPI app ──────────────────────────────────────────────────────────────
@@ -1064,6 +1127,8 @@ def _api_task(task_id: str, req: AnalyzeRequest):
     )
     if req.client_reference_id:
         result["client_reference_id"] = req.client_reference_id
+
+    result["_run_dir"] = str(run_dir)
 
     try:
         os.remove(video_path)
