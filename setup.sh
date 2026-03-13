@@ -40,7 +40,8 @@ pip install \
     requests \
     jinja2 \
     transformers \
-    numpy
+    numpy \
+    yt-dlp
 
 # ── 4. Optional: InsightFace for performer recognition ───────────────────────
 echo
