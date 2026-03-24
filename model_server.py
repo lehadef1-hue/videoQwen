@@ -2,6 +2,7 @@ import os
 import sys
 import base64
 import io
+import gc
 import logging
 import multiprocessing
 from fastapi import FastAPI, HTTPException
@@ -10,6 +11,18 @@ from typing import List, Dict, Any, Optional
 from PIL import Image
 from vllm import LLM, SamplingParams
 from transformers import AutoProcessor
+
+# vLLM >= 0.12: StructuredOutputsParams + structured_outputs
+# vLLM 0.4–0.11: GuidedDecodingParams + guided_decoding
+_StructuredOutputsParams = None
+_GuidedDecodingParams = None
+try:
+    from vllm.sampling_params import StructuredOutputsParams as _StructuredOutputsParams
+except ImportError:
+    try:
+        from vllm.sampling_params import GuidedDecodingParams as _GuidedDecodingParams
+    except ImportError:
+        pass  # guided generation not available in this vLLM build
 import torch
 
 
@@ -48,9 +61,9 @@ logger.info(f"GPU total: {total:.2f} GB")
 logger.info(f"GPU free:  {free:.2f} GB")
 
 if free < 35:
-    gpu_util = 0.55
+    gpu_util = 0.60
 else:
-    gpu_util = 0.80
+    gpu_util = 0.90
 
 logger.info(f"gpu_memory_utilization = {gpu_util}")
 
@@ -69,11 +82,14 @@ llm = LLM(
     download_dir=CACHE_DIR,
     dtype="auto",
     gpu_memory_utilization=gpu_util,
-    # max_model_len=16384,
-    max_model_len=24576,
+    max_model_len=32768,
     enforce_eager=True,
     tensor_parallel_size=1,
-    limit_mm_per_prompt={"image": 30},
+    limit_mm_per_prompt={"image": 25},
+    mm_processor_kwargs={
+        "min_pixels": 256 * 28 * 28,   # ~200k px  ≈ 256 tokens/image
+        "max_pixels": 512 * 28 * 28,   # ~400k px  ≈ 512 tokens/image max
+    },
 )
 
 logger.info("✓ Модель успешно загружена")
@@ -87,6 +103,8 @@ class GenerateRequest(BaseModel):
     prompt: str
     base64_images: List[str] = []
     sampling_params: Optional[Dict[str, Any]] = None
+    enable_thinking: bool = False  # Qwen3 /think mode — outputs <think>…</think> before answer
+    guided_json: Optional[Dict[str, Any]] = None  # JSON schema → forced structured output
 
 
 def decode_base64_image(b64: str) -> Image.Image:
@@ -96,6 +114,8 @@ def decode_base64_image(b64: str) -> Image.Image:
 
 @app.post("/generate")
 async def generate(request: GenerateRequest):
+    images = []
+    outputs = None
     try:
         images = [decode_base64_image(b) for b in request.base64_images]
 
@@ -107,16 +127,30 @@ async def generate(request: GenerateRequest):
         full_prompt = processor.apply_chat_template(
             conversation,
             tokenize=False,
-            add_generation_prompt=True
+            add_generation_prompt=True,
+            enable_thinking=request.enable_thinking,
         )
 
-        sampling = SamplingParams(
-            **(request.sampling_params or {
-                "temperature": 0.7,
-                "top_p": 0.95,
-                "max_tokens": 96
-            })
-        )
+        if request.enable_thinking:
+            logger.info("Thinking mode enabled for this request")
+
+        params = request.sampling_params or {
+            "temperature": 0.7,
+            "top_p": 0.95,
+            "max_tokens": 96
+        }
+        # Repetition penalty prevents infinite "Wait, let me look..." loops
+        params.setdefault("repetition_penalty", 1.15)
+        if request.guided_json:
+            if _StructuredOutputsParams is not None:
+                # vLLM >= 0.12: new API
+                params["structured_outputs"] = _StructuredOutputsParams(json=request.guided_json)
+            elif _GuidedDecodingParams is not None:
+                # vLLM 0.4–0.11: old API
+                params["guided_decoding"] = _GuidedDecodingParams(json=request.guided_json)
+            else:
+                logger.warning("Structured output not supported by this vLLM build — skipping")
+        sampling = SamplingParams(**params)
 
         # outputs = llm.generate(full_prompt, sampling)
         if images:
@@ -132,13 +166,24 @@ async def generate(request: GenerateRequest):
         else:
             outputs = llm.generate(full_prompt, sampling)
             
-        text = outputs[0].outputs[0].text.strip()
+        out = outputs[0].outputs[0]
+        text = out.text.strip()
+        finish_reason = out.finish_reason  # "stop" or "length" (tokens exhausted)
 
-        return {"output": text}
+        if finish_reason == "length":
+            logger.warning(f"⚠️  finish_reason=length — max_tokens hit, response truncated ({len(text)} chars)")
+
+        return {"output": text, "finish_reason": finish_reason}
 
     except Exception as e:
         logger.exception("Ошибка генерации")
         raise HTTPException(500, detail=str(e))
+    finally:
+        # Явно освобождаем PIL-изображения и vLLM outputs — иначе накапливаются в RAM
+        for img in images:
+            img.close()
+        del images, outputs
+        gc.collect()
 
 
 @app.get("/")
